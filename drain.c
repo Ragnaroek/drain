@@ -2,13 +2,17 @@
 #include <stdio.h>
 #include <notcurses/notcurses.h>
 
+static struct ncplane	*menue_plane(struct ncplane *, unsigned cols);
+
 int
-main(int argc __unused, char **argv __unused) {
+main(int argc __unused, char **argv __unused)
+{
    	struct notcurses_options opts = {
 		.flags = NCOPTION_SUPPRESS_BANNERS,
 	};
 	struct notcurses *nc;
 	struct ncplane *std;
+	struct ncplane *menue;
 	struct ncinput ni;
 	unsigned rows, cols;
 	uint32_t key;
@@ -19,8 +23,11 @@ main(int argc __unused, char **argv __unused) {
 	std = notcurses_stdplane(nc);
 	ncplane_dim_yx(std, &rows, &cols);
 
-	ncplane_set_fg_rgb8(std, 0x80, 0xff, 0x80);
-	ncplane_putstr_yx(std, 1, 2, "drain - power usage");
+	menue = menue_plane(std, cols);
+    if (menue == NULL) {
+        notcurses_stop(nc);
+        return (1);
+    }
 
 	ncplane_set_fg_default(std);
 	ncplane_printf_yx(std, 3, 2, "terminal: %u x %u", cols, rows);
@@ -37,4 +44,45 @@ main(int argc __unused, char **argv __unused) {
 
 	notcurses_stop(nc);
 	return (EXIT_SUCCESS);
+}
+
+struct ncplane*
+menue_plane(struct ncplane *parent, unsigned cols)
+{
+    struct ncplane *n;
+    uint64_t channels = 0;
+    ncplane_options opts = {
+       .x = 0,
+       .y = 0,
+       .rows = 1,
+       .cols = cols,
+       .name = "menue",
+    };
+    if ((n = ncplane_create(parent, &opts)) == NULL)
+        return (NULL);
+
+	ncchannels_set_fg_rgb(&channels, 0xB5D4F4);
+	ncchannels_set_bg_rgb(&channels, 0x1F3A5F);
+	ncplane_set_base(n, " ", 0, channels);
+
+	ncplane_set_fg_rgb(n, 0xFFFFFF);
+	ncplane_putstr(n, "  drain  ");
+
+	ncplane_set_fg_rgb(n, 0x042C53);
+	ncplane_set_bg_rgb(n, 0x85B7EB);
+	ncplane_putstr(n, " 1 Overview ");
+
+	ncplane_set_channels(n, channels);
+
+	ncplane_set_fg_rgb(n, 0xFAC775);
+    ncplane_putstr(n, "   2");
+    ncplane_set_fg_rgb(n, 0xB5D4F4);
+    ncplane_putstr(n, " Frequencies ");
+
+    ncplane_set_fg_rgb(n, 0xFAC775);
+    ncplane_putstr(n, "   3");
+    ncplane_set_fg_rgb(n, 0xB5D4F4);
+    ncplane_putstr(n, " Tunables ");
+
+    return (n);
 }
