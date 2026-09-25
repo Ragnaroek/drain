@@ -58,5 +58,5 @@ dkms.conf
 drain
 drain.debug
 drain.full
-drain.pieo
+*.pieo
 .depend*
