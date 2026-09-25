@@ -2,11 +2,20 @@
 #include <stdio.h>
 #include <notcurses/notcurses.h>
 
-static struct ncplane	*menue_plane(struct ncplane *, unsigned cols);
+#include "power.h"
+
+static struct ncplane	*ui_menue(struct ncplane *, unsigned cols);
+static struct ncplane   *ui_sparkline(struct ncplane *parent, unsigned cols);
+
+struct drain_state {
+    struct power_ring power;
+};
 
 int
 main(int argc __unused, char **argv __unused)
 {
+    struct drain_state st;
+
    	struct notcurses_options opts = {
 		.flags = NCOPTION_SUPPRESS_BANNERS,
 	};
@@ -23,14 +32,14 @@ main(int argc __unused, char **argv __unused)
 	std = notcurses_stdplane(nc);
 	ncplane_dim_yx(std, &rows, &cols);
 
-	menue = menue_plane(std, cols);
+	menue = ui_menue(std, cols);
     if (menue == NULL) {
         notcurses_stop(nc);
         return (1);
     }
 
 	ncplane_set_fg_default(std);
-	ncplane_printf_yx(std, 3, 2, "terminal: %u x %u", cols, rows);
+	ncplane_printf_yx(std, 3, 2, "terminal: %u x %u, state %p", cols, rows, &st);
 	ncplane_putstr_yx(std, rows - 2, 2, "press q to quit");
 
 	notcurses_render(nc);
@@ -47,7 +56,7 @@ main(int argc __unused, char **argv __unused)
 }
 
 struct ncplane*
-menue_plane(struct ncplane *parent, unsigned cols)
+ui_menue(struct ncplane *parent, unsigned screen_width)
 {
     struct ncplane *n;
     uint64_t channels = 0;
@@ -55,13 +64,13 @@ menue_plane(struct ncplane *parent, unsigned cols)
        .x = 0,
        .y = 0,
        .rows = 1,
-       .cols = cols,
-       .name = "menue",
+       .cols = screen_width,
+       .name = "menue"
     };
     if ((n = ncplane_create(parent, &opts)) == NULL)
         return (NULL);
 
-	ncchannels_set_fg_rgb(&channels, 0xB5D4F4);
+    ncchannels_set_fg_rgb(&channels, 0xB5D4F4);
 	ncchannels_set_bg_rgb(&channels, 0x1F3A5F);
 	ncplane_set_base(n, " ", 0, channels);
 
@@ -85,4 +94,13 @@ menue_plane(struct ncplane *parent, unsigned cols)
     ncplane_putstr(n, " Tunables ");
 
     return (n);
+}
+
+struct ncplane*
+ui_sparkline(struct ncplane *parent, unsigned cols)
+{
+    // TODO render the sparkline diagram and the
+    // texts around it!
+
+    return (NULL);
 }
