@@ -60,3 +60,5 @@ drain.debug
 drain.full
 *.pieo
 .depend*
+.cache/
+compile_commands.json

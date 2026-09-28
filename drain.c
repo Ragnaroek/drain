@@ -1,8 +1,12 @@
 #include <sys/cdefs.h>
+#include <sys/event.h>
 #include <sys/param.h>
 #include <stdio.h>
 #include <math.h>
 #include <notcurses/notcurses.h>
+#include <err.h>
+#include <errno.h>
+#include <unistd.h>		/* close() */
 
 #include "power.h"
 
@@ -10,56 +14,116 @@
 #define COL_MUTED	0x888780
 #define COL_SPARK	0x5DCAA5
 
+#define SAMPLE_SECONDS 2
+
 static const char *blocks[] = {
 	" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"
 };
 
+struct drain_state {
+    struct power_ring power;
+};
+
+static void sample_data(struct drain_state *st);
+static int ui_update(struct notcurses *nc, struct drain_state *st);
 static struct ncplane	*ui_menue(struct ncplane *, unsigned cols);
 static struct ncplane   *ui_sparkline(struct ncplane *parent,
     const struct power_ring *r, unsigned screen_width);
 static void             draw_sparkline_graph(struct ncplane *n,
     int x, int y, int width, const struct power_ring *r, double max);
 
-struct drain_state {
-    struct power_ring power;
-};
-
-static struct drain_state st;
+static struct drain_state state;
 
 int
 main(int argc __unused, char **argv __unused)
 {
-    // Testdata init
-    power_ring_push(&st.power, 5.0);
-    power_ring_push(&st.power, 7.0);
-    power_ring_push(&st.power, 11.0);
-    // Testdata init end
-
+    int kq, nev;
+   	struct kevent ch[2], ev;
+    bool quit, dirty;
 
    	struct notcurses_options opts = {
 		.flags = NCOPTION_SUPPRESS_BANNERS,
 	};
 	struct notcurses *nc;
-	struct ncplane *std;
-	struct ncplane *menue;
-	struct ncplane *sparkline;
+
 	struct ncinput ni;
-	unsigned rows, cols;
+
 	uint32_t key;
 
 	if ((nc = notcurses_core_init(&opts, NULL)) == NULL)
 		return (EXIT_FAILURE);
 
-	std = notcurses_stdplane(nc);
+	if (ui_update(nc, &state) != 0) {
+		notcurses_stop(nc);
+	    err(1, "ui_update");
+	}
+
+	// kqueue setup
+    if ((kq = kqueue()) == -1)
+        err(1, "kqueue");
+
+	EV_SET(&ch[0], 1, EVFILT_TIMER, EV_ADD, NOTE_SECONDS, SAMPLE_SECONDS,
+        NULL);
+	EV_SET(&ch[1], notcurses_inputready_fd(nc), EVFILT_READ, EV_ADD, 0, 0,
+        NULL);
+
+	if (kevent(kq, ch, 2, NULL, 0, NULL) == -1)
+	    err(1, "kevent");
+
+	// event loop
+	for (quit = false; !quit; ) {
+	    dirty = false;
+	    nev = kevent(kq, NULL, 0, &ev, 1, NULL);
+		if (nev == -1) {
+		    if (errno == EINTR)
+				continue;
+			break;
+		}
+        if (ev.filter == EVFILT_TIMER) {
+            sample_data(&state);
+            dirty = true;
+        } else {
+            while ((key = notcurses_get_blocking(nc, &ni)) != (uint32_t)-1) {
+                if (ni.evtype == NCTYPE_RELEASE)
+                    continue;
+                if (key == 'q') {
+                    quit = true;
+                    break;
+                }
+                dirty = true;
+           	}
+		}
+		if (dirty) {
+		    ui_update(nc, &state);
+		}
+	}
+
+	close(kq);
+	notcurses_stop(nc);
+	return (EXIT_SUCCESS);
+}
+
+void
+sample_data(struct drain_state *st) {
+    power_ring_push(&st->power, 8.88);
+}
+
+int
+ui_update(struct notcurses *nc, struct drain_state *st) {
+   	struct ncplane *std;
+	struct ncplane *menue;
+	struct ncplane *sparkline;
+    unsigned rows, cols;
+
+    std = notcurses_stdplane(nc);
 	ncplane_dim_yx(std, &rows, &cols);
 
 	menue = ui_menue(std, cols);
     if (menue == NULL) {
-        notcurses_stop(nc);
         return (1);
     }
 
-    sparkline = ui_sparkline(std, &st.power, cols);
+    sparkline = ui_sparkline(std, &st->power, cols);
     if (sparkline == NULL) {
         notcurses_stop(nc);
         return (1);
@@ -69,16 +133,7 @@ main(int argc __unused, char **argv __unused)
 	ncplane_putstr_yx(std, rows - 2, 2, "press q to quit");
 
 	notcurses_render(nc);
-
-	while ((key = notcurses_get_blocking(nc, &ni)) != (uint32_t)-1) {
-		if (ni.evtype == NCTYPE_RELEASE)
-			continue;
-		if (key == 'q')
-			break;
-	}
-
-	notcurses_stop(nc);
-	return (EXIT_SUCCESS);
+	return (0);
 }
 
 struct ncplane*
@@ -121,7 +176,6 @@ ui_menue(struct ncplane *parent, unsigned screen_width)
 
     return (n);
 }
-
 
 #define LAST_READ_WIDTH 11
 
