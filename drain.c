@@ -1,8 +1,12 @@
 #include <sys/cdefs.h>
+#include <sys/event.h>
 #include <sys/param.h>
 #include <stdio.h>
 #include <math.h>
 #include <notcurses/notcurses.h>
+#include <err.h>
+#include <errno.h>
+#include <unistd.h>		/* close() */
 
 #include "power.h"
 
@@ -10,10 +14,13 @@
 #define COL_MUTED	0x888780
 #define COL_SPARK	0x5DCAA5
 
+#define SAMPLE_SECONDS 2
+
 static const char *blocks[] = {
 	" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"
 };
 
+static void sample_data(void);
 static struct ncplane	*ui_menue(struct ncplane *, unsigned cols);
 static struct ncplane   *ui_sparkline(struct ncplane *parent,
     const struct power_ring *r, unsigned screen_width);
@@ -29,12 +36,15 @@ static struct drain_state st;
 int
 main(int argc __unused, char **argv __unused)
 {
+    int kq, nev;
+   	struct kevent ch[2], ev;
+    bool quit, dirty;
+
     // Testdata init
     power_ring_push(&st.power, 5.0);
     power_ring_push(&st.power, 7.0);
     power_ring_push(&st.power, 11.0);
     // Testdata init end
-
 
    	struct notcurses_options opts = {
 		.flags = NCOPTION_SUPPRESS_BANNERS,
@@ -70,15 +80,56 @@ main(int argc __unused, char **argv __unused)
 
 	notcurses_render(nc);
 
-	while ((key = notcurses_get_blocking(nc, &ni)) != (uint32_t)-1) {
-		if (ni.evtype == NCTYPE_RELEASE)
-			continue;
-		if (key == 'q')
+	// kqueue setup
+	if ((kq = kqueue()) == -1)
+        err(1, "kqueue");
+
+	EV_SET(&ch[0], 1, EVFILT_TIMER, EV_ADD, NOTE_SECONDS, SAMPLE_SECONDS,
+        NULL);
+	EV_SET(&ch[1], notcurses_inputready_fd(nc), EVFILT_READ, EV_ADD, 0, 0,
+        NULL);
+
+	if (kevent(kq, ch, 2, NULL, 0, NULL) == -1)
+	    err(1, "kevent");
+
+	// event loop
+	for (quit = false; !quit; ) {
+	    dirty = false;
+	    nev = kevent(kq, NULL, 0, &ev, 1, NULL);
+		if (nev == -1) {
+		    if (errno == EINTR)
+				continue;
 			break;
+		}
+		if (ev.filter == EVFILT_TIMER) {
+			sample_data();
+			dirty = true;
+			continue;
+		} else {
+           	while ((key = notcurses_get_blocking(nc, &ni)) != (uint32_t)-1) {
+                if (ni.evtype == NCTYPE_RELEASE)
+                    continue;
+          		if (key == 'q') {
+                    quit = true;
+         			break;
+                }
+                dirty = true;
+           	}
+		}
+		if (dirty) {
+		    notcurses_render(nc);
+		}
+
 	}
 
+	close(kq);
 	notcurses_stop(nc);
 	return (EXIT_SUCCESS);
+}
+
+void
+sample_data(void) {
+    power_ring_push(&st.power, 8.88);
 }
 
 struct ncplane*
@@ -121,7 +172,6 @@ ui_menue(struct ncplane *parent, unsigned screen_width)
 
     return (n);
 }
-
 
 #define LAST_READ_WIDTH 11
 
