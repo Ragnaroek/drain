@@ -1,18 +1,22 @@
 #include <sys/cdefs.h>
 #include <sys/event.h>
 #include <sys/param.h>
-#include <stdio.h>
-#include <math.h>
-#include <notcurses/notcurses.h>
+
 #include <err.h>
 #include <errno.h>
-#include <unistd.h>		/* close() */
+#include <stdbool.h>
+#include <stdio.h>
+#include <math.h>
+#include <unistd.h>
+
+#include <notcurses/notcurses.h>
 
 #include "power.h"
 
-#define COL_VALUE	0xFFFFFF
-#define COL_MUTED	0x888780
-#define COL_SPARK	0x5DCAA5
+#define COL_VALUE	    0xFFFFFF
+#define COL_MUTED	    0x888780
+#define COL_SPARK_BATT	0x5DCAA5
+#define COL_SPARK_AC    0x85B7EB
 
 #define SAMPLE_SECONDS 2
 
@@ -24,7 +28,7 @@ struct drain_state {
     struct power_ring power;
 };
 
-static void sample_data(struct drain_state *st);
+static void sample_data(struct drain_state *st, struct power_src *ps);
 static int ui_update(struct notcurses *nc, struct drain_state *st);
 static struct ncplane	*ui_menue(struct ncplane *, unsigned cols);
 static struct ncplane   *ui_sparkline(struct ncplane *parent,
@@ -33,25 +37,27 @@ static void             draw_sparkline_graph(struct ncplane *n,
     int x, int y, int width, const struct power_ring *r, double max);
 
 static struct drain_state state;
+static struct power_src power_source;
 
 int
 main(int argc __unused, char **argv __unused)
 {
+   	struct notcurses_options opts = {
+        .flags = NCOPTION_SUPPRESS_BANNERS,
+    };
     int kq, nev;
    	struct kevent ch[2], ev;
     bool quit, dirty;
 
-   	struct notcurses_options opts = {
-		.flags = NCOPTION_SUPPRESS_BANNERS,
-	};
+    if (power_src_init(&power_source) != 0)
+       err(1, "power_src_init");
+
 	struct notcurses *nc;
-
 	struct ncinput ni;
-
 	uint32_t key;
 
 	if ((nc = notcurses_core_init(&opts, NULL)) == NULL)
-		return (EXIT_FAILURE);
+	    return (EXIT_FAILURE);
 
 	if (ui_update(nc, &state) != 0) {
 		notcurses_stop(nc);
@@ -80,7 +86,7 @@ main(int argc __unused, char **argv __unused)
 			break;
 		}
         if (ev.filter == EVFILT_TIMER) {
-            sample_data(&state);
+            sample_data(&state, &power_source);
             dirty = true;
         } else {
             while ((key = notcurses_get_blocking(nc, &ni)) != (uint32_t)-1) {
@@ -104,12 +110,17 @@ main(int argc __unused, char **argv __unused)
 }
 
 void
-sample_data(struct drain_state *st) {
-    power_ring_push(&st->power, 8.88);
+sample_data(struct drain_state *st, struct power_src *ps)
+{
+    struct power_read v;
+
+    power_read(ps, &v);
+    power_ring_push(&st->power, v);
 }
 
 int
-ui_update(struct notcurses *nc, struct drain_state *st) {
+ui_update(struct notcurses *nc, struct drain_state *st)
+{
    	struct ncplane *std;
 	struct ncplane *menue;
 	struct ncplane *sparkline;
@@ -128,6 +139,13 @@ ui_update(struct notcurses *nc, struct drain_state *st) {
         notcurses_stop(nc);
         return (1);
     }
+
+    // debug prints
+    char buf[64];
+    snprintf(buf, sizeof(buf), "unit: %x", power_source.batt_units);
+
+    ncplane_putstr_yx(std, 5, 0, buf);
+    // end debug prints
 
 	ncplane_set_fg_default(std);
 	ncplane_putstr_yx(std, rows - 2, 2, "press q to quit");
@@ -211,7 +229,7 @@ ui_sparkline(struct ncplane *parent, const struct power_ring *r,
     // last reading info
    	ncplane_set_fg_rgb(n, COL_VALUE);
     ncplane_on_styles(n, NCSTYLE_BOLD);
-	ncplane_printf_yx(n, 0, 1, "%4.1f W", power_ring_at(r, 0));
+	ncplane_printf_yx(n, 0, 1, "%4.1f W", power_ring_at(r, 0).value);
 	ncplane_set_fg_rgb(n, COL_MUTED);
 	ncplane_putstr(n, " now");
 
@@ -245,16 +263,24 @@ draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
 {
 	size_t i, shown;
 	int c, pad;
+	struct power_read v;
 
 	if (width <= 0)
 		return;
 	shown = MIN(power_ring_count(r), (size_t)width);
 	pad = width - (int)shown;
 
-	ncplane_set_fg_rgb(n, COL_SPARK);
+
 	for (c = 0; c < pad; c++)
 		ncplane_putstr_yx(n, y, x + c, " ");
-	for (i = 0; i < shown; i++)
-		ncplane_putstr_yx(n, y, x + pad + (int)i,
-		    blocks[spark_level(power_ring_at(r, shown - 1 - i), max)]);
+	for (i = 0; i < shown; i++) {
+	    v = power_ring_at(r, shown - 1 - i);
+		if (v.src == BATTERY)
+		    ncplane_set_fg_rgb(n, COL_SPARK_BATT);
+		else
+		    ncplane_set_fg_rgb(n, COL_SPARK_AC);
+
+	    ncplane_putstr_yx(n, y, x + pad + (int)i,
+		    blocks[spark_level(v.value, max)]);
+	}
 }
