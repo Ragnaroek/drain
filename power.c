@@ -127,7 +127,7 @@ battery_read(const struct power_src *ps, struct power_read *v)
 		mw += (double)arg.bst.rate;
 
     v->src = BATTERY;
-    v->value = mw;
+    v->value = mw / 1000.0;
 
     return (0);
 }

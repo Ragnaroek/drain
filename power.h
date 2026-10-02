@@ -19,7 +19,7 @@ enum power_src_type {
 
 struct power_read {
     enum power_src_type src;
-    double value; //mw
+    double value; //watt
 };
 
 struct power_ring {

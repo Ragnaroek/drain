@@ -26,15 +26,18 @@ static const char *blocks[] = {
 
 struct drain_state {
     struct power_ring power;
+
+    // ui state:
+    double spark_scale;
 };
 
 static void sample_data(struct drain_state *st, struct power_src *ps);
 static int ui_update(struct notcurses *nc, struct drain_state *st);
 static struct ncplane	*ui_menue(struct ncplane *, unsigned cols);
 static struct ncplane   *ui_sparkline(struct ncplane *parent,
-    const struct power_ring *r, unsigned screen_width);
+    struct drain_state *st, const struct power_ring *r, unsigned screen_width);
 static void             draw_sparkline_graph(struct ncplane *n,
-    int x, int y, int width, const struct power_ring *r, double max);
+    int x, int y, int width, struct drain_state *st, const struct power_ring *r, double max);
 
 static struct drain_state state;
 static struct power_src power_source;
@@ -134,18 +137,11 @@ ui_update(struct notcurses *nc, struct drain_state *st)
         return (1);
     }
 
-    sparkline = ui_sparkline(std, &st->power, cols);
+    sparkline = ui_sparkline(std, st, &st->power, cols);
     if (sparkline == NULL) {
         notcurses_stop(nc);
         return (1);
     }
-
-    // debug prints
-    char buf[64];
-    snprintf(buf, sizeof(buf), "unit: %x", power_source.batt_units);
-
-    ncplane_putstr_yx(std, 5, 0, buf);
-    // end debug prints
 
 	ncplane_set_fg_default(std);
 	ncplane_putstr_yx(std, rows - 2, 2, "press q to quit");
@@ -195,20 +191,22 @@ ui_menue(struct ncplane *parent, unsigned screen_width)
     return (n);
 }
 
-#define LAST_READ_WIDTH 11
+#define LAST_READ_WIDTH 9
 
 struct ncplane*
-ui_sparkline(struct ncplane *parent, const struct power_ring *r,
-    unsigned screen_width)
+ui_sparkline(struct ncplane *parent, struct drain_state *st,
+    const struct power_ring *r, unsigned screen_width)
 {
     struct ncplane *n;
-    size_t shown;
+    size_t shown, l;
     double min, max;
+    int width;
+    char buf[10];
 
     ncplane_options opts = {
        .x = 0,
        .y = 1,
-       .rows = 2,
+       .rows = 3,
        .cols = screen_width,
        .name = "spark"
     };
@@ -229,37 +227,67 @@ ui_sparkline(struct ncplane *parent, const struct power_ring *r,
     // last reading info
    	ncplane_set_fg_rgb(n, COL_VALUE);
     ncplane_on_styles(n, NCSTYLE_BOLD);
-	ncplane_printf_yx(n, 0, 1, "%4.1f W", power_ring_at(r, 0).value);
+	ncplane_printf_yx(n, 0, 1, "%4.1f W ", power_ring_at(r, 0).value);
 	ncplane_set_fg_rgb(n, COL_MUTED);
-	ncplane_putstr(n, " now");
+	ncplane_putstr_yx(n, 1, 4, "now");
 
-	draw_sparkline_graph(n, 0, LAST_READ_WIDTH,
-	    screen_width - LAST_READ_WIDTH * 2, r, max);
+	width = screen_width - LAST_READ_WIDTH * 2;
+
+	draw_sparkline_graph(n, 0, LAST_READ_WIDTH, width, st, r, max);
+
+	// caption
+	ncplane_set_fg_rgb(n, COL_MUTED);
+	l = snprintf(buf, sizeof buf, "0-%.0f W", st->spark_scale);
+	ncplane_putstr_yx(n, 2, LAST_READ_WIDTH + (width - l) , buf);
 
     return (n);
 }
 
-
-// returns a normalize level of a reading in reference
-// to the max reading.
-static int
-spark_level(double v, double max)
+static double
+nice_ceil(double w)
 {
-	int level;
+	static const double steps[] = {
+		1, 2, 5, 10, 15, 20, 30, 40, 50, 75, 100, 150, 200, 300, 500
+	};
+	size_t i;
 
-	if (max <= 0.0)
-		return (0);
-	level = (int)lround(v / max * 8.0);
-	if (level < 1 && v > 0.0)
+	for (i = 0; i < nitems(steps); i++)
+		if (steps[i] >= w)
+			return (steps[i]);
+	return (ceil(w / 100.0) * 100.0);
+}
+
+/* Grow at once; shrink only once the data uses less than half the scale. */
+static double
+update_scale(double scale, double max)
+{
+	double want;
+
+	want = nice_ceil(max * 1.1);
+	if (want > scale || max < scale * 0.5)
+		return (want);
+	return (scale);
+}
+
+static void
+draw_bar(struct ncplane *n, int y, int x, double v, double scale)
+{
+    int bot, level, top;
+
+    level = scale > 0.0 ? (int)lround(v / scale * 16.0) : 0;
+   	if (level < 1 && v > 0.0)
 		level = 1;		/* keep nonzero samples visible */
-	if (level > 8)
-		level = 8;
-	return (level);
+	if (level > 16)
+		level = 16;
+	bot = MIN(level, 8);
+	top = level - bot;
+	ncplane_putstr_yx(n, y, x, blocks[top]);
+	ncplane_putstr_yx(n, y + 1, x, blocks[bot]);
 }
 
 static void
 draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
-    const struct power_ring *r, double max)
+    struct drain_state *st, const struct power_ring *r, double max)
 {
 	size_t i, shown;
 	int c, pad;
@@ -270,9 +298,11 @@ draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
 	shown = MIN(power_ring_count(r), (size_t)width);
 	pad = width - (int)shown;
 
+	st->spark_scale = update_scale(st->spark_scale, max);
 
 	for (c = 0; c < pad; c++)
 		ncplane_putstr_yx(n, y, x + c, " ");
+
 	for (i = 0; i < shown; i++) {
 	    v = power_ring_at(r, shown - 1 - i);
 		if (v.src == BATTERY)
@@ -280,7 +310,6 @@ draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
 		else
 		    ncplane_set_fg_rgb(n, COL_SPARK_AC);
 
-	    ncplane_putstr_yx(n, y, x + pad + (int)i,
-		    blocks[spark_level(v.value, max)]);
+		draw_bar(n, y, x + pad + (int)i, v.value, st->spark_scale);
 	}
 }

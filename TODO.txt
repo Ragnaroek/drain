@@ -1,0 +1,2 @@
+NEXT:
+- read real RAPL data an show them in the sparkline
