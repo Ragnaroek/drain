@@ -60,13 +60,16 @@ power_src_init(struct power_src *ps)
     int units;
 
     ps->acpi_fd = open("/dev/acpi", O_RDONLY | O_CLOEXEC);
-	if (ps->acpi_fd == -1)
-		return (-1);			/* no ACPI, so no battery */
+	if (ps->acpi_fd == -1) {
+	    ps->has_battery = false; /* no ACPI, so no battery */
+		return (0);
+	}
 
 	if (ioctl(ps->acpi_fd, ACPIIO_BATT_GET_UNITS, &units) == -1 || units <= 0) {
 	    close(ps->acpi_fd);
 		ps->acpi_fd = -1;
-		return (-1);
+		ps->has_battery = false;
+		return (0);
 	}
 
 	memset(&arg, 0, sizeof(arg));
