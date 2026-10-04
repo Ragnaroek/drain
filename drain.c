@@ -18,7 +18,7 @@
 #define COL_SPARK_BATT	0x5DCAA5
 #define COL_SPARK_AC    0x85B7EB
 
-#define SAMPLE_SECONDS 2
+#define SAMPLE_SECONDS 5
 
 static const char *blocks[] = {
 	" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"

@@ -1,2 +1,7 @@
 NEXT:
+- switch to sampling the rate myself
+  - on startup read the baseline
+  - each computes the diff between the last rate
+  - each sample stores just watts consumed
+
 - read real RAPL data an show them in the sparkline
