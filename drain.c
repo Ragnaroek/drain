@@ -1,6 +1,7 @@
 #include <sys/cdefs.h>
 #include <sys/event.h>
 #include <sys/param.h>
+#include <sys/time.h>
 
 #include <err.h>
 #include <errno.h>
@@ -51,13 +52,15 @@ main(int argc __unused, char **argv __unused)
     int kq, nev;
    	struct kevent ch[2], ev;
     bool quit, dirty;
+   	struct notcurses *nc;
+	struct ncinput ni;
+	uint32_t key;
 
+	// power source setup
     if (power_src_init(&power_source) != 0)
        err(1, "power_src_init");
 
-	struct notcurses *nc;
-	struct ncinput ni;
-	uint32_t key;
+    // notcurses setup
 
 	if ((nc = notcurses_core_init(&opts, NULL)) == NULL)
 	    return (EXIT_FAILURE);
@@ -115,9 +118,9 @@ main(int argc __unused, char **argv __unused)
 void
 sample_data(struct drain_state *st, struct power_src *ps)
 {
-    struct power_read v;
+    struct power_sample v;
 
-    power_read(ps, &v);
+    power_read_sample(ps, &v);
     power_ring_push(&st->power, v);
 }
 
@@ -227,7 +230,7 @@ ui_sparkline(struct ncplane *parent, struct drain_state *st,
     // last reading info
    	ncplane_set_fg_rgb(n, COL_VALUE);
     ncplane_on_styles(n, NCSTYLE_BOLD);
-	ncplane_printf_yx(n, 0, 1, "%4.1f W ", power_ring_at(r, 0).value);
+	ncplane_printf_yx(n, 0, 1, "%4.1f W ", power_ring_at(r, 0).drained);
 	ncplane_set_fg_rgb(n, COL_MUTED);
 	ncplane_putstr_yx(n, 1, 4, "now");
 
@@ -291,7 +294,7 @@ draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
 {
 	size_t i, shown;
 	int c, pad;
-	struct power_read v;
+	struct power_sample v;
 
 	if (width <= 0)
 		return;
@@ -310,6 +313,6 @@ draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
 		else
 		    ncplane_set_fg_rgb(n, COL_SPARK_AC);
 
-		draw_bar(n, y, x + pad + (int)i, v.value, st->spark_scale);
+		draw_bar(n, y, x + pad + (int)i, v.drained, st->spark_scale);
 	}
 }

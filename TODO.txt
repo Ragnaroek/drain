@@ -1,7 +1,5 @@
-NEXT:
-- switch to sampling the rate myself
-  - on startup read the baseline
-  - each computes the diff between the last rate
-  - each sample stores just watts consumed
+TODO:
+- NEXT: interpolate reading if watt read is 0
+- auto-scale the interval if the reading is repeatedly 0
 
 - read real RAPL data an show them in the sparkline
