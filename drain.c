@@ -32,13 +32,15 @@ struct drain_state {
     double spark_scale;
 };
 
-static void sample_data(struct drain_state *st, struct power_src *ps);
-static int ui_update(struct notcurses *nc, struct drain_state *st);
+static void             sample_data(struct drain_state *st,
+    struct power_src *ps);
+static int              ui_update(struct notcurses *nc, struct drain_state *st);
 static struct ncplane	*ui_menue(struct ncplane *, unsigned cols);
 static struct ncplane   *ui_sparkline(struct ncplane *parent,
     struct drain_state *st, const struct power_ring *r, unsigned screen_width);
-static void             draw_sparkline_graph(struct ncplane *n,
-    int x, int y, int width, struct drain_state *st, const struct power_ring *r, double max);
+static double           draw_sparkline_graph(struct ncplane *n,
+    int x, int y, int width, struct drain_state *st,
+    const struct power_ring *r, double max);
 
 static struct drain_state state;
 static struct power_src power_source;
@@ -58,11 +60,10 @@ main(int argc __unused, char **argv __unused)
 
 	// power source setup
     if (power_src_init(&power_source) != 0)
-       err(1, "power_src_init");
+        err(1, "power_src_init");
 
     // notcurses setup
-
-	if ((nc = notcurses_core_init(&opts, NULL)) == NULL)
+    if ((nc = notcurses_core_init(&opts, NULL)) == NULL)
 	    return (EXIT_FAILURE);
 
 	if (ui_update(nc, &state) != 0) {
@@ -202,7 +203,7 @@ ui_sparkline(struct ncplane *parent, struct drain_state *st,
 {
     struct ncplane *n;
     size_t shown, l;
-    double min, max;
+    double min, max, last_val;
     int width;
     char buf[10];
 
@@ -227,16 +228,17 @@ ui_sparkline(struct ncplane *parent, struct drain_state *st,
     shown = power_ring_count(r);
     power_ring_minmax(r, shown, &min, &max);
 
-    // last reading info
-   	ncplane_set_fg_rgb(n, COL_VALUE);
-    ncplane_on_styles(n, NCSTYLE_BOLD);
-	ncplane_printf_yx(n, 0, 1, "%4.1f W ", power_ring_at(r, 0).drained);
-	ncplane_set_fg_rgb(n, COL_MUTED);
-	ncplane_putstr_yx(n, 1, 4, "now");
-
 	width = screen_width - LAST_READ_WIDTH * 2;
 
-	draw_sparkline_graph(n, 0, LAST_READ_WIDTH, width, st, r, max);
+	last_val = draw_sparkline_graph(n, 0, LAST_READ_WIDTH,
+	    width, st, r, max);
+
+	// last reading info
+   	ncplane_set_fg_rgb(n, COL_VALUE);
+    ncplane_on_styles(n, NCSTYLE_BOLD);
+    ncplane_printf_yx(n, 0, 1, "%4.1f W ", last_val);
+    ncplane_set_fg_rgb(n, COL_MUTED);
+    ncplane_putstr_yx(n, 1, 4, "now");
 
 	// caption
 	ncplane_set_fg_rgb(n, COL_MUTED);
@@ -288,16 +290,17 @@ draw_bar(struct ncplane *n, int y, int x, double v, double scale)
 	ncplane_putstr_yx(n, y + 1, x, blocks[bot]);
 }
 
-static void
+static double
 draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
     struct drain_state *st, const struct power_ring *r, double max)
 {
 	size_t i, shown;
 	int c, pad;
+	double drained_v, prev_drained_v;
 	struct power_sample v;
 
 	if (width <= 0)
-		return;
+		return (0.0);
 	shown = MIN(power_ring_count(r), (size_t)width);
 	pad = width - (int)shown;
 
@@ -306,6 +309,8 @@ draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
 	for (c = 0; c < pad; c++)
 		ncplane_putstr_yx(n, y, x + c, " ");
 
+	drained_v = 0.0;
+	prev_drained_v = 0.0;
 	for (i = 0; i < shown; i++) {
 	    v = power_ring_at(r, shown - 1 - i);
 		if (v.src == BATTERY)
@@ -313,6 +318,16 @@ draw_sparkline_graph(struct ncplane *n, int y, int x, int width,
 		else
 		    ncplane_set_fg_rgb(n, COL_SPARK_AC);
 
-		draw_bar(n, y, x + pad + (int)i, v.drained, st->spark_scale);
+		if (v.drained == 0.0) {
+		    drained_v = prev_drained_v;
+		} else {
+		    drained_v = v.drained;
+		}
+
+		draw_bar(n, y, x + pad + (int)i, drained_v, st->spark_scale);
+
+		prev_drained_v = v.drained;
 	}
+
+	return (drained_v);
 }

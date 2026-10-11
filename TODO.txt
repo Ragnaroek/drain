@@ -1,5 +1,7 @@
-TODO:
-- NEXT: interpolate reading if watt read is 0
-- auto-scale the interval if the reading is repeatedly 0
-
+NEXT:
 - read real RAPL data an show them in the sparkline
+
+
+future work:
+- auto-scale the interval if the reading is repeatedly 0
+- read process/irq usage in the system and model watt usages based on this data
